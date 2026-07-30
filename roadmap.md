@@ -43,6 +43,147 @@ privacidade/LGPD de verdade, não enfeite — e é a primeira frase do README no
 | Validação da saída | **Pydantic** |
 | Empacotar (fim) | **pytest**, **Docker** |
 
+## Arquitetura
+
+### Monólito modular
+akesios-scribe/
+│
+├── app.py              # ponto de entrada
+│
+├── config/
+│   └── settings.py
+│
+├── watcher/
+│   ├── observer.py
+│   └── events.py
+│
+├── transcriber/
+│   ├── whisper.py
+│   └── audio.py
+│
+├── llm/
+│   ├── ollama.py
+│   ├── prompts.py
+│   └── report.py
+│
+├── exporter/
+│   ├── txt.py
+│   ├── pdf.py
+│   └── docx.py
+│
+├── inbox/
+│   └── receiver.py
+│
+├── domain/
+│   ├── consultation.py
+│   └── patient.py
+│
+├── utils/
+│
+└── tests/
+
+### Fluxo
+Watcher
+     │
+     ▼
+Transcriber
+     │
+     ▼
+LLM
+     │
+     ▼
+Exporter
+
+**Isso é:**
+
+áudio
+
+↓
+
+transcrição
+
+↓
+
+estruturação
+
+↓
+
+laudo
+
+### Como a estrutura cresce (por fase)
+
+A árvore acima é o **alvo final**. Não crie tudo agora — cada milestone **adiciona só
+o que precisa** (Princípio #1). Abaixo, o que **nasce** em cada fase:
+
+**M1 — detectar arquivo** (o mínimo que roda)
+```
+akesios_scribe/
+├── app.py            → ponto de entrada; liga o watcher
+├── config/
+│   └── settings.py   → só a pasta observada (ex.: AUDIOS_DIR)
+└── watcher/
+    ├── observer.py   → escuta a pasta
+    └── events.py     → o que fazer quando um arquivo chega
+```
+**M2 — esperar arquivo pronto** → cresce **dentro de** `watcher/` (uma checagem
+"o arquivo parou de crescer"); nenhuma pasta nova.
+
+**M3 — transcrever**
+```
++ transcriber/
+    ├── audio.py      → conversão via FFmpeg (se precisar)
+    └── whisper.py    → áudio → texto (Faster-Whisper)
+```
+**M4 — rascunho de laudo**
+```
++ llm/
+│   ├── ollama.py     → chamada ao modelo local
+│   └── prompts.py    → o(s) prompt(s)
++ exporter/
+    └── txt.py        → grava laudo.txt   (pdf/docx só lá no M9)
+```
+**M5 — ciclo de vida** → pastas de dados `audios/`, `Processados/`, `Falhas/` (no
+`.gitignore`) + um orquestrador fino (no `app.py` ou um `pipeline.py`) que move os arquivos.
+
+**M6 — robustez** → `config/settings.py` ganha corpo (modelo, caminhos); nasce
+`utils/` (ex.: `log.py`); marca de "já processado".
+
+**M7 — saída estruturada**
+```
++ domain/
+│   ├── consultation.py  → entidades do domínio
+│   └── report.py        → schema Pydantic do laudo
++ llm/report.py          → parseia e valida a saída do modelo
+```
+**M8 — e-mail** → `+ inbox/receiver.py` (IMAP). *(nome `inbox`, nunca `email` — colide com o stdlib.)*
+
+**M9 — portfólio** → `+ tests/`, `pyproject.toml`, `Dockerfile`; (opcional) migrar pro **layout `src/`**.
+
+### Nota de nomes & layout (responde "como seria o src")
+
+- **Repo:** `akesios-scribe` (hífen ok). **Pacote importável:** `akesios_scribe`
+  (underscore — hífen não é importável em Python).
+- **Agora (simples, recomendado pro M1):** o pacote `akesios_scribe/` fica **na raiz**
+  do repo; cada pasta com um `__init__.py`. Roda com `python -m akesios_scribe.app`.
+  **Só isso já resolve** o problema do hífen — não precisa mexer em mais nada agora.
+- **Depois (empacotar, M9) — layout `src/`:**
+  ```
+  akesios-scribe/            (repo — hífen ok)
+  ├── pyproject.toml
+  ├── README.md
+  ├── src/
+  │   └── akesios_scribe/    (o pacote — underscore)
+  │       ├── __init__.py
+  │       ├── app.py
+  │       └── watcher/ ...
+  ├── tests/                 (fora do src/)
+  └── audios/  Processados/  Falhas/   (dados, no .gitignore)
+  ```
+  Instala com `pip install -e .`. **Por que existe:** o `src/` impede você de importar
+  o pacote "sem querer" da raiz (força usar a versão instalada) — pega bugs de
+  empacotamento cedo. É *nice-to-have* de quando for distribuir/Docker, **não** agora.
+  (buscar: *"src layout Python"*, *"pyproject.toml"*.)
+
 ---
 
 ## Milestones
